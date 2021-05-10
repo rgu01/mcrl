@@ -95,24 +95,22 @@ public:
 
         // lets try to find a matching state
         auto it = _Q.find(state);
+        qvalue_t best = {0,0};
         if(it != _Q.end())
         {
             auto& state_table = it->second;
-            qvalue_t best = {0,0};
             for(auto& other : state_table)
             {
                 if(other.second._count == 0) continue;
-                if(_is_minimization && (best._count == 0 || other.second._value < best._value))
+                if(best._count == 0)
                     best = other.second;
-                else if (_is_minimization && (best._count == 0 || other.second._value > best._value))
+                if(_is_minimization && other.second._value < best._value)
+                    best = other.second;
+                else if (!_is_minimization && other.second._value > best._value)
                     best = other.second;
             }
-            return best;
         }
-        else
-        {
-            return {0,0};
-        }
+        return best;
     }
 
 public:
@@ -253,23 +251,15 @@ public:
         // when print is called, learning turns false
 
         assert(current_v._count == 0 || best_v._count != 0);
-        bool found = current_v._count != 0 && best_v._count != 0;
         
-        if(found && current_v._value == best_v._value)
+        if(current_v._count > 0 && current_v._value == best_v._value)
         {
             return true;
         }
-        else if(current_v._count == 0)
+        else if(best_v._count == 0)
         {
             // if the current state and action is not found, 
             // then the action is allowed for exploration
-            return true; 
-        }
-        else if(!best_v._count == 0)
-        {
-            assert(false);
-            // if the state is not in the Q-table so the best action of the state is not found
-            // then the action is not 
             return true; 
         }
         
