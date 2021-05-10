@@ -90,7 +90,7 @@ extern "C" void uppaal_external_learner_sample_handler(void* object, size_t acti
     {
         stop = true;
     }*/
-    q->add_sample(from_d_vars, from_c_vars, action, t_d_vars, t_c_vars, value/100);
+    q->add_sample(from_d_vars, from_c_vars, action, t_d_vars, t_c_vars, value);
 }
 
 extern "C" void uppaal_external_learner_online_sample_handler(void* object, size_t action,
@@ -118,13 +118,11 @@ extern "C" double uppaal_external_learner_predict(void* object, bool is_eval, si
     // a weighted choice will be done over all actions according to the weight
     auto q = (QLearner*) object;
     //std::ostream& out = std::cerr;
-    bool found = false, isBest = false;
     double d_value = 1.0;
     
     if(is_eval)
     {
-        isBest = q->is_allowed(d_vars, c_vars, action, &found);
-        if(isBest && found)
+        if(q->is_allowed(d_vars, c_vars, action))
         {
             d_value = 1.0;
         }
@@ -135,10 +133,20 @@ extern "C" double uppaal_external_learner_predict(void* object, bool is_eval, si
     }
     else
     {
-        //d_value = 1.0;
-        //d_value = 1e100 - q->value(d_vars, c_vars, action, &found);
-        d_value = 1.0 - q->value(d_vars, c_vars, action, &found);
-        //assert(d_value >= 0);
+        auto [lower, upper, sum_count] = q->search_statistics(d_vars, c_vars);
+        auto value = q->value(d_vars, c_vars, action);
+        if(sum_count == 0)
+        {
+            assert(value._count == 0);
+            return 0;
+        }
+        else
+        {
+            if(q->_is_minimization)
+                return upper - value._value;
+            else
+                return value._value - lower;
+        }
     }
     
     return d_value;

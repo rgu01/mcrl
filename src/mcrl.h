@@ -22,8 +22,6 @@
 #include <cstring>
 #include <cmath>
 
-#define DEFAULT_REWARD 32767
-
 /**
  * Simple implementation of a Q-learning algorithm
  * This implementation is *NOT* intended to be efficient, rather it is
@@ -92,32 +90,27 @@ public:
      * @param c_vars
      * @return
      */
-    double best_value(double* d_vars, double* c_vars, bool* found) {
+    qvalue_t best_value(double* d_vars, double* c_vars) {
         auto state = make_state(d_vars, c_vars);
 
         // lets try to find a matching state
         auto it = _Q.find(state);
+        qvalue_t best = {0,0};
         if(it != _Q.end())
         {
             auto& state_table = it->second;
-            double best = std::numeric_limits<double>::infinity();
-            if(!_is_minimization)
-                best *= -1; // flip to negative infinity if we do maximization
             for(auto& other : state_table)
             {
-                if(_is_minimization)
-                    best = std::min(best, other.second._value);
-                else
-                    best = std::max(best, other.second._value);
+                if(other.second._count == 0) continue;
+                if(best._count == 0)
+                    best = other.second;
+                if(_is_minimization && other.second._value < best._value)
+                    best = other.second;
+                else if (!_is_minimization && other.second._value > best._value)
+                    best = other.second;
             }
-            *found = true;
-            return best;
         }
-        else
-        {
-            *found = false;
-            return DEFAULT_REWARD;
-        }
+        return best;
     }
 
 public:
@@ -148,28 +141,59 @@ public:
     
     void add_sample(double* d_vars, double* c_vars, size_t action, double* t_d_vars, double* t_c_vars, double reward)
     {
-        bool found = false;
         const double gamma = 0.99; // discount, we could make it converge to zero by making this dependent on the number of samples seen for this state-action-pair
         const double alpha = 2.0; // constant learning rate
         auto from_state = make_state(d_vars, c_vars);
-        auto future_estimate = best_value(t_d_vars, t_c_vars, &found);
+        auto future_estimate = best_value(t_d_vars, t_c_vars);
         qvalue_t& q = _Q[from_state][action];
         const double learning_rate = 1.0/std::min<double>(alpha,q._count+1);
         //const double learning_rate = 1.0/alpha;
         assert(learning_rate <= 1.0);
+        assert(future_estimate._value == 0 || future_estimate._count != 0);
         if(q._count == 0)
         {
-            // special case, we have no old value
-            q._value = learning_rate * reward;
+            // special case, we have no old value            
+            q._value = reward + gamma * future_estimate._value;
         }
         else
         {
             // standard Q-value update
-            q._value = q._value + learning_rate * (reward + gamma * future_estimate - q._value);
+            q._value = q._value + (learning_rate * (reward + (gamma * future_estimate._value) - q._value));
         }
         q._count += 1;
     }
 
+    /**
+     * Returns the statistics of the "mapped state", namely the range of the q-values 
+     * (first constituents of return) and the total sum of samples seen (last 
+     * constituent).
+     * @param d_vars
+     * @param c_vars
+     * @return (lower,upper,sum_samples)
+     */
+    std::tuple<double,double,size_t> search_statistics(double* d_vars, double* c_vars)
+    {
+        auto state = make_state(d_vars, c_vars);
+        auto it = _Q.find(state);
+        double lower = std::numeric_limits<double>::infinity();
+        double upper = -std::numeric_limits<double>::infinity();
+        size_t sum_count = 0;
+        if(it != _Q.end())
+        {
+            auto& state_table = it->second;
+            for(auto& stats : state_table)
+            {
+                if(stats.second._count != 0)
+                {
+                    sum_count += stats.second._count;
+                    lower = std::min(lower, stats.second._value);
+                    upper = std::max(upper, stats.second._value);
+                }
+            }
+        }
+        return {lower, upper, sum_count};
+    }
+    
     /**
      * Returns the Q-value for a given action (a) or the lowest (resp highest if maximization)
      * value of any other action (a') observed if no observation has yet been made
@@ -179,7 +203,7 @@ public:
      * @param action
      * @return
      */
-    double value(double* d_vars, double* c_vars, size_t action, bool* found) {
+    qvalue_t value(double* d_vars, double* c_vars, size_t action) {
         auto state = make_state(d_vars, c_vars);
 
         // lets try to find a matching state
@@ -191,37 +215,19 @@ public:
             auto action_it = state_table.find(action);
             if(action_it != state_table.end())
             {
-                *found = true;
                 // we have observations for this action, return the computed Q-value
-                if(action_it->second._value != DEFAULT_REWARD)
-                {
-                    return action_it->second._value;
-                }
-                else
-                {
-                    return action_it->second._value + 1;
-                }
+                return action_it->second;
             }
             else
             {
                 // No prior observation of the action, we need a default value.
-                *found = false;
-                return DEFAULT_REWARD;
-                /*if(printed)
-                {
-                    return DEFAULT_REWARD;
-                }
-                else
-                {
-                    return best_value(d_vars, c_vars, &found);
-                }*/
+                return {0, 0};
             }
         }
         else
         {
             // No prior observation of the state, we need a default value.
-            *found = false;
-            return DEFAULT_REWARD;
+            return {0,0};
         }
     }
 
@@ -234,54 +240,26 @@ public:
      * @param action
      * @return
      */
-    bool is_allowed(double* d_vars, double* c_vars, size_t action, bool* found) 
+    bool is_allowed(double* d_vars, double* c_vars, size_t action) 
     {
         //bool stop = false;
-        bool is_current_found = false;
-        bool is_best_found = false;
-        double current_v = value(d_vars, c_vars, action, &is_current_found);
-        double best_v = best_value(d_vars, c_vars, &is_best_found);
-        auto state = make_state(d_vars, c_vars);// this is for debug
+        qvalue_t current_v = value(d_vars, c_vars, action);
+        qvalue_t best_v = best_value(d_vars, c_vars);
+        //auto state = make_state(d_vars, c_vars);// this is for debug
         //std::ostream& out = std::cerr;// this is for debug
         
         // when print is called, learning turns false
-        if(!learning)
-        {
-            if(!is_best_found && action != 0)
-            {
-                // this is when the model goes to a state that is not in the Q-table
-                // and action ID is not 0.
-                //stop = true; 
-                /*out << "(";
-                for(size_t d = 0; d < d_size(); ++d)
-                {
-                    out << d_vars[d] << ",";
-                }
-                out << "): " << action << " is not found. \n";*/
-            }
-            else if(action == 0)
-            {
-                // this is when the model goes to a state that is not in the Q-table
-                // and action ID is 0.
-                //stop = true;
-            }
-        }
-        *found = is_current_found & is_best_found;
+
+        assert(current_v._count == 0 || best_v._count != 0);
         
-        if(*found && current_v == best_v)
+        if(current_v._count > 0 && current_v._value == best_v._value)
         {
             return true;
         }
-        else if(!is_current_found)
+        else if(best_v._count == 0)
         {
             // if the current state and action is not found, 
             // then the action is allowed for exploration
-            return true; 
-        }
-        else if(!is_best_found)
-        {
-            // if the state is not in the Q-table so the best action of the state is not found
-            // then the action is not 
             return true; 
         }
         
