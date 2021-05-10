@@ -133,12 +133,20 @@ extern "C" double uppaal_external_learner_predict(void* object, bool is_eval, si
     }
     else
     {
+        auto [lower, upper, sum_count] = q->search_statistics(d_vars, c_vars);
         auto value = q->value(d_vars, c_vars, action);
-        //d_value = 1.0;
-        //d_value = 1e100 - q->value(d_vars, c_vars, action, &found);
-        // TODO, normalize here!
-        d_value = 1.0 - value._value;
-        //assert(d_value >= 0);
+        if(sum_count == 0)
+        {
+            assert(value._count == 0);
+            return 0;
+        }
+        else
+        {
+            if(q->_is_minimization)
+                return upper - value._value;
+            else
+                return value._value - lower;
+        }
     }
     
     return d_value;

@@ -166,6 +166,37 @@ public:
     }
 
     /**
+     * Returns the statistics of the "mapped state", namely the range of the q-values 
+     * (first constituents of return) and the total sum of samples seen (last 
+     * constituent).
+     * @param d_vars
+     * @param c_vars
+     * @return (lower,upper,sum_samples)
+     */
+    std::tuple<double,double,size_t> search_statistics(double* d_vars, double* c_vars)
+    {
+        auto state = make_state(d_vars, c_vars);
+        auto it = _Q.find(state);
+        double lower = std::numeric_limits<double>::infinity();
+        double upper = -std::numeric_limits<double>::infinity();
+        size_t sum_count = 0;
+        if(it != _Q.end())
+        {
+            auto& state_table = it->second;
+            for(auto& stats : state_table)
+            {
+                if(stats.second._count != 0)
+                {
+                    sum_count += stats.second._count;
+                    lower = std::min(lower, stats.second._value);
+                    upper = std::max(upper, stats.second._value);
+                }
+            }
+        }
+        return {lower, upper, sum_count};
+    }
+    
+    /**
      * Returns the Q-value for a given action (a) or the lowest (resp highest if maximization)
      * value of any other action (a') observed if no observation has yet been made
      * of the action (a).
